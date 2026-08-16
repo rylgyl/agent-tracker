@@ -1,3 +1,4 @@
+import CryptoKit
 import SwiftUI
 
 /// The popover panel, styled after the Claude Code `/usage` screen:
@@ -14,10 +15,14 @@ struct MenuView: View {
         static let width: CGFloat = 320
     }
 
-    /// Easter egg: a little love note, shown only when this Mac's account
-    /// is the right one.
+    /// Easter egg: a little love note, shown only on one specific Mac account.
+    /// Matched by digest so the account name isn't sitting in the source.
+    private static let noteAccountDigest =
+        "dc2415a4aefa5bbdc9baad1937f4bdf4c9a11bea88ead33e3cb26752b64f3b9d"
+
     private var showsNote: Bool {
-        NSUserName() == "the-right-one"
+        let digest = SHA256.hash(data: Data(NSUserName().utf8))
+        return digest.map { String(format: "%02x", $0) }.joined() == Self.noteAccountDigest
     }
 
     var body: some View {

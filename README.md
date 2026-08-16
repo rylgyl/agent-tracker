@@ -130,4 +130,5 @@ Sources/ClaudeUsageTracker/
   LocalUsage.swift            JSONL log scanner (tokens by day/model)
   Formatters.swift            "184.8K", "Resets in 6d 4h", etc.
 scripts/make-app.sh           Builds and installs the .app bundle
+scripts/make-icon.swift       Renders AppIcon.icns from the in-app asterisk mark
 ```
