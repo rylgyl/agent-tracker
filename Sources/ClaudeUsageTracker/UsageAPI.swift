@@ -16,6 +16,7 @@ struct UsageLimits {
 
 enum UsageAPIError: LocalizedError {
     case unauthorized
+    case rateLimited(Date?)
     case http(Int)
     case malformed
 
@@ -23,6 +24,11 @@ enum UsageAPIError: LocalizedError {
         switch self {
         case .unauthorized:
             return "Not authorized. Run `claude` in a terminal to log in again."
+        case .rateLimited(let resetsAt):
+            if let resetsAt {
+                return "Rate limited by the usage API. Resets \(resetsAt.formatted(date: .omitted, time: .shortened))."
+            }
+            return "Rate limited by the usage API. Try again shortly."
         case .http(let code):
             return "Usage API returned HTTP \(code)."
         case .malformed:
@@ -43,6 +49,7 @@ enum UsageAPI {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw UsageAPIError.malformed }
         if http.statusCode == 401 || http.statusCode == 403 { throw UsageAPIError.unauthorized }
+        if http.statusCode == 429 { throw UsageAPIError.rateLimited(retryAfter(http)) }
         guard (200..<300).contains(http.statusCode) else { throw UsageAPIError.http(http.statusCode) }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -73,6 +80,26 @@ enum UsageAPI {
             resetsAt = Date(timeIntervalSince1970: epoch)
         }
         return LimitWindow(utilization: utilization, resetsAt: resetsAt)
+    }
+
+    /// `Retry-After` is either delta-seconds ("120") or an HTTP-date
+    /// ("Fri, 15 Aug 2026 21:00:00 GMT"); some proxies also send a
+    /// unix-timestamp-style `x-ratelimit-reset` header.
+    private static func retryAfter(_ http: HTTPURLResponse) -> Date? {
+        if let raw = http.value(forHTTPHeaderField: "retry-after") {
+            if let seconds = Double(raw) {
+                return Date().addingTimeInterval(seconds)
+            }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "GMT")
+            formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+            if let date = formatter.date(from: raw) { return date }
+        }
+        if let raw = http.value(forHTTPHeaderField: "x-ratelimit-reset"), let epoch = Double(raw) {
+            return Date(timeIntervalSince1970: epoch)
+        }
+        return nil
     }
 
     static func parseTimestamp(_ raw: String) -> Date? {
