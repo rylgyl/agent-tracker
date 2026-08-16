@@ -40,7 +40,22 @@ The app doesn't need its own login — it piggybacks on the Claude CLI:
   never leaves your machine.
 
 Data refreshes automatically every 60 seconds, or on demand via the refresh
-button in the panel.
+button in the panel. If the usage API rate-limits a request, the app backs
+off until the limit resets (the refresh button greys out and its tooltip
+shows when it'll unlock) instead of retrying every 60 seconds regardless.
+
+## Usage
+
+1. Click the ✳ icon in the menu bar to open the panel.
+2. **LIMITS** shows how much of your session and weekly windows you've used,
+   and when each resets.
+3. **TOKENS BY DAY** / **TOKENS BY MODEL** show local usage for the last 7
+   days, from this machine only.
+4. Use the refresh (↻) button for an on-demand update, or the power button to
+   quit.
+
+The panel is a standard macOS menu bar popover — click anywhere outside it,
+or the icon again, to dismiss it.
 
 ## Requirements
 
@@ -67,6 +82,24 @@ On first launch, macOS will ask for permission to read the
 `Claude Code-credentials` Keychain item — click **Always Allow** so the prompt
 doesn't reappear on every refresh.
 
+### Sharing with someone else
+
+The app is only ad-hoc signed (no Apple Developer ID), so give people the
+*source*, not a copy of the built `.app` — each person should clone and build
+it themselves:
+
+```bash
+git clone https://github.com/rylgyl/claude-tracker.git
+cd claude-tracker
+./scripts/make-app.sh --install
+open "/Applications/Claude Usage Tracker.app"
+```
+
+Building locally avoids the macOS quarantine flag that gets attached to
+files downloaded or AirDropped in, so Gatekeeper won't block it. They'll also
+need the Claude CLI installed and logged in on their own machine (see
+Requirements above) — the app reads *their* local credentials, not yours.
+
 ### Launch at login
 
 System Settings → General → Login Items → add **Claude Usage Tracker**.
@@ -80,6 +113,9 @@ System Settings → General → Login Items → add **Claude Usage Tracker**.
 - **Token charts are empty** — token history comes from local CLI logs, so it
   only covers usage from `claude` on this machine (not claude.ai or other
   devices).
+- **"Rate limited by the usage API"** — the OAuth usage endpoint is being hit
+  too often (e.g. repeated manual refreshes). The app backs off automatically
+  and the panel/tooltip shows when it'll retry; no action needed.
 
 ## Project layout
 
