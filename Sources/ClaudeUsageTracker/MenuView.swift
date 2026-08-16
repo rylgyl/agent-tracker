@@ -14,6 +14,12 @@ struct MenuView: View {
         static let width: CGFloat = 320
     }
 
+    /// Easter egg: a little love note, shown only when this Mac's account
+    /// is the right one.
+    private var showsNote: Bool {
+        NSUserName() == "the-right-one"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
@@ -56,6 +62,11 @@ struct MenuView: View {
                 }
             }
             Spacer()
+            if showsNote {
+                Text("hi love \u{2764}\u{FE0F}")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color.pink)
+            }
         }
     }
 
@@ -143,11 +154,13 @@ struct MenuView: View {
                 store.refresh()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .opacity(store.isRefreshing ? 0.4 : 1)
+                    .opacity(store.isRefreshing || store.isRateLimited ? 0.4 : 1)
             }
             .buttonStyle(.plain)
-            .disabled(store.isRefreshing)
-            .help("Refresh now")
+            .disabled(store.isRefreshing || store.isRateLimited)
+            .help(store.isRateLimited
+                  ? "Rate limited until \(store.rateLimitedUntil?.formatted(date: .omitted, time: .shortened) ?? "shortly")"
+                  : "Refresh now")
             Button {
                 NSApp.terminate(nil)
             } label: {
