@@ -1,16 +1,18 @@
 import SwiftUI
 
 @main
-struct ClaudeUsageTrackerApp: App {
+struct AgentTrackerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = UsageStore()
+    /// Mirrors the panel's tab selection so the menu bar icon follows it.
+    @AppStorage(MenuTab.storageKey) private var selectedTab: MenuTab = .claude
 
     var body: some Scene {
         MenuBarExtra {
             MenuView()
                 .environmentObject(store)
         } label: {
-            Image(systemName: "asterisk")
+            Image(systemName: selectedTab.icon)
         }
         .menuBarExtraStyle(.window)
     }
