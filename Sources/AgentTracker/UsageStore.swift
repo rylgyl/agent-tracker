@@ -7,6 +7,7 @@ import SwiftUI
 final class UsageStore: ObservableObject {
     @Published private(set) var limits: UsageLimits?
     @Published private(set) var localUsage: LocalUsage = .empty
+    @Published private(set) var codexUsage: CodexUsage = .empty
     @Published private(set) var subscriptionType: String?
     @Published private(set) var errorMessage: String?
     @Published private(set) var isRefreshing = false
@@ -37,17 +38,24 @@ final class UsageStore: ObservableObject {
     }
 
     func refresh() {
-        guard !isRefreshing, !isRateLimited else { return }
+        guard !isRefreshing else { return }
         isRefreshing = true
         Task {
             defer { isRefreshing = false }
 
-            // Local log scan works even when the API/auth is unavailable.
+            // Local log scans work even when the API/auth is unavailable, and
+            // the Codex tab is served entirely from them.
             let scanned = await Task.detached(priority: .utility) {
-                LocalUsageScanner.scan()
+                (claude: LocalUsageScanner.scan(), codex: CodexUsageScanner.scan())
             }.value
-            localUsage = scanned
+            localUsage = scanned.claude
+            codexUsage = scanned.codex
 
+            // The usage API is the only rate-limited part of a refresh.
+            guard !isRateLimited else {
+                lastUpdated = Date()
+                return
+            }
             do {
                 let credentials = try await CredentialsProvider.loadValid()
                 subscriptionType = credentials.subscriptionType?.uppercased()

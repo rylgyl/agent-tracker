@@ -1,13 +1,13 @@
 #!/bin/bash
-# Builds ClaudeUsageTracker.app into ./dist and (optionally) installs it
+# Builds AgentTracker.app into ./dist and (optionally) installs it
 # into /Applications. Run from the repository root:
 #   ./scripts/make-app.sh [--install]
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP_NAME="Claude Usage Tracker"
-BUNDLE_ID="com.claude-tracker.usage"
+APP_NAME="Agent Tracker"
+BUNDLE_ID="com.agent-tracker.usage"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
 
@@ -17,7 +17,7 @@ swift build -c release
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp ".build/release/ClaudeUsageTracker" "$APP/Contents/MacOS/$APP_NAME"
+cp ".build/release/AgentTracker" "$APP/Contents/MacOS/$APP_NAME"
 
 echo "Rendering app icon..."
 swift scripts/make-icon.swift "$APP/Contents/Resources/AppIcon.icns"

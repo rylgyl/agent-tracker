@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClaudeUsageTracker",
+    name: "AgentTracker",
     platforms: [
         .macOS(.v13)
     ],
     targets: [
         .executableTarget(
-            name: "ClaudeUsageTracker",
-            path: "Sources/ClaudeUsageTracker"
+            name: "AgentTracker",
+            path: "Sources/AgentTracker"
         )
     ]
 )
