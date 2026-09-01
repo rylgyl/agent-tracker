@@ -37,11 +37,16 @@ Neither tab needs its own login — the app piggybacks on the CLIs.
 
 ### Claude tab
 
-- **Authentication**: reads the OAuth token that `claude` stores after login
-  (macOS Keychain item `Claude Code-credentials`, with a fallback to
-  `~/.claude/.credentials.json`). Expired tokens are refreshed automatically
-  using the CLI's refresh token; nothing is written back, the CLI stays the
-  owner of the credential.
+- **Authentication**: seeds from the OAuth token that `claude` stores after
+  login (macOS Keychain item `Claude Code-credentials`, with a fallback to
+  `~/.claude/.credentials.json`), then keeps its own copy in the Keychain item
+  `com.agent-tracker.usage` and refreshes that in place. The CLI's item is
+  read again only if the app's own refresh token stops working.
+
+  The app keeps a copy because the CLI *rewrites* its Keychain item on every
+  token refresh, which regenerates the item's ACL and silently revokes the
+  "Always Allow" grant — that's what made the permission dialog reappear every
+  few hours. An item only this app writes keeps its grant.
 - **Limits** (Session / Weekly percentages and reset countdowns): fetched from
   the same OAuth usage endpoint the CLI's `/usage` screen uses.
 - **Tokens by day / by model**: computed locally by scanning the CLI's session
@@ -105,8 +110,12 @@ swift run
 ```
 
 On first launch, macOS will ask for permission to read the
-`Claude Code-credentials` Keychain item — click **Always Allow** so the prompt
-doesn't reappear on every refresh.
+`Claude Code-credentials` Keychain item — click **Always Allow**. The app then
+maintains its own credential and won't need that item again.
+
+Because the app is only ad-hoc signed, its code identity changes every time you
+rebuild it, which invalidates the grant on its own Keychain item too. So expect
+one prompt after each `./scripts/make-app.sh` — but not between rebuilds.
 
 ### Sharing with someone else
 
