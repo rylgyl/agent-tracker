@@ -57,7 +57,7 @@ final class UsageStore: ObservableObject {
                 return
             }
             do {
-                let credentials = try await CredentialsProvider.loadValid()
+                let credentials = try CredentialsProvider.loadValid()
                 subscriptionType = credentials.subscriptionType?.uppercased()
                 limits = try await UsageAPI.fetchLimits(accessToken: credentials.accessToken)
                 errorMessage = nil

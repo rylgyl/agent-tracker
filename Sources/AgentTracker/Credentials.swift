@@ -4,7 +4,7 @@ import Security
 /// The OAuth credentials Claude Code (the CLI) stores after `claude` login.
 struct ClaudeCredentials {
     var accessToken: String
-    var refreshToken: String?
+    // The stored refresh token is intentionally not read: see CredentialsProvider.
     /// Milliseconds since epoch, as stored by the CLI.
     var expiresAt: Double?
     var subscriptionType: String?
@@ -19,7 +19,7 @@ struct ClaudeCredentials {
 enum CredentialsError: LocalizedError {
     case notFound
     case malformed
-    case refreshFailed(String)
+    case expired
 
     var errorDescription: String? {
         switch self {
@@ -27,29 +27,28 @@ enum CredentialsError: LocalizedError {
             return "No Claude CLI credentials found. Run `claude` in a terminal and log in first."
         case .malformed:
             return "Claude CLI credentials could not be parsed."
-        case .refreshFailed(let detail):
-            return "Token refresh failed (\(detail)). Run `claude` to re-authenticate."
+        case .expired:
+            return "Claude CLI token has expired. Run `claude` in a terminal to refresh it."
         }
     }
 }
 
-/// Supplies a valid OAuth access token, preferring a credential this app owns.
+/// Supplies the Claude CLI's OAuth access token, read-only.
 ///
-/// The Claude CLI rewrites its own Keychain item ("Claude Code-credentials")
-/// whenever it refreshes, which regenerates that item's ACL and drops whatever
-/// "Always Allow" grant was given to us. So we seed from the CLI's item once,
-/// then keep our own item that only this app writes — that grant survives, and
-/// the CLI is consulted again only if our own refresh token stops working.
+/// This app deliberately never performs a `refresh_token` grant. That endpoint
+/// rotates the refresh token — presenting the CLI's token invalidates the copy
+/// the CLI still has on disk, which logs the user out of `claude` the next time
+/// they use it. So the CLI is the sole owner of the credential and the only
+/// thing that renews it; we just read whatever it currently holds.
+///
+/// We keep a cached copy in our own Keychain item so a poll doesn't have to
+/// touch the CLI's item while the token is still valid.
 enum CredentialsProvider {
     private static let keychainService = "Claude Code-credentials"
-    private static let ownService = "com.agent-tracker.usage"
-    private static let ownAccount = "credentials"
-    // Claude Code's public OAuth client id, needed for refresh_token grants.
-    private static let oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-    private static let tokenEndpoint = URL(string: "https://console.anthropic.com/v1/oauth/token")!
+    private static let cacheService = "com.agent-tracker.usage"
+    private static let cacheAccount = "credentials"
 
-    /// Reads the Claude CLI's credential. This is the call that can raise a
-    /// Keychain prompt, so it runs only when our own copy is missing or dead.
+    /// Reads the Claude CLI's credential.
     static func load() throws -> ClaudeCredentials {
         let data: Data
         if let keychainData = readKeychain(service: keychainService, account: nil) {
@@ -62,81 +61,50 @@ enum CredentialsProvider {
         return try parse(data)
     }
 
-    /// Returns a credential set with a currently-valid access token.
+    /// Returns a credential with a currently-valid access token, or throws.
     ///
-    /// Prefers our own stored credential, refreshing it in place when expired,
-    /// and re-seeds from the CLI only when we have nothing usable left.
-    static func loadValid() async throws -> ClaudeCredentials {
-        if let own = try? loadOwn() {
-            if !own.isExpired { return own }
-            if let refreshed = try? await refresh(own) {
-                storeOwn(refreshed)
-                return refreshed
-            }
+    /// Never renews anything: an expired token is reported as such and the user
+    /// runs `claude` to renew it, which is also what repopulates this app.
+    static func loadValid() throws -> ClaudeCredentials {
+        if let cached = try? loadCached(), !cached.isExpired {
+            return cached
         }
 
-        var creds = try load()
-        if creds.isExpired {
-            creds = try await refresh(creds)
+        let credentials = try load()
+        guard !credentials.isExpired else {
+            // The CLI renews lazily, on its next use, so there is nothing to do
+            // but wait for it. Drop the stale cache so we keep re-reading.
+            clearCache()
+            throw CredentialsError.expired
         }
-        storeOwn(creds)
-        return creds
+        storeCache(credentials)
+        return credentials
     }
 
-    /// Exchanges a refresh token for a fresh access token.
-    private static func refresh(_ credentials: ClaudeCredentials) async throws -> ClaudeCredentials {
-        guard let refreshToken = credentials.refreshToken else {
-            throw CredentialsError.refreshFailed("token expired and no refresh token stored")
-        }
+    // MARK: - Cache
 
-        var request = URLRequest(url: tokenEndpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "grant_type": "refresh_token",
-            "refresh_token": refreshToken,
-            "client_id": oauthClientID,
-        ])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw CredentialsError.refreshFailed("HTTP \(code)")
-        }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let accessToken = json["access_token"] as? String else {
-            throw CredentialsError.refreshFailed("unexpected response")
-        }
-
-        var updated = credentials
-        updated.accessToken = accessToken
-        // The rotated refresh token has to be kept, or the next refresh fails
-        // and we are back to prompting for the CLI's item.
-        if let newRefresh = json["refresh_token"] as? String {
-            updated.refreshToken = newRefresh
-        }
-        if let expiresIn = json["expires_in"] as? Double {
-            updated.expiresAt = (Date().timeIntervalSince1970 + expiresIn) * 1000
-        }
-        return updated
-    }
-
-    // MARK: - Our own Keychain item
-
-    /// Reads the credential this app wrote. Nothing else updates this item, so
-    /// its "Always Allow" grant is not invalidated behind our back.
-    private static func loadOwn() throws -> ClaudeCredentials {
-        guard let data = readKeychain(service: ownService, account: ownAccount) else {
+    /// Reads our cached copy of the CLI's credential.
+    private static func loadCached() throws -> ClaudeCredentials {
+        guard let data = readKeychain(service: cacheService, account: cacheAccount) else {
             throw CredentialsError.notFound
         }
         return try parse(data)
     }
 
-    /// Writes the credential to our own item, replacing any previous value.
-    /// Best-effort: a failure here only costs us a prompt on the next refresh.
-    private static func storeOwn(_ credentials: ClaudeCredentials) {
+    private static func clearCache() {
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: cacheService,
+            kSecAttrAccount as String: cacheAccount,
+        ] as CFDictionary)
+    }
+
+    /// Caches the credential, replacing any previous value. Best-effort: a
+    /// failure here only costs us a read of the CLI's item on the next poll.
+    private static func storeCache(_ credentials: ClaudeCredentials) {
+        // The refresh token is deliberately not cached: this app never uses it,
+        // and a copy we don't need is a secret we shouldn't be holding.
         var oauth: [String: Any] = ["accessToken": credentials.accessToken]
-        if let refreshToken = credentials.refreshToken { oauth["refreshToken"] = refreshToken }
         if let expiresAt = credentials.expiresAt { oauth["expiresAt"] = expiresAt }
         if let subscription = credentials.subscriptionType { oauth["subscriptionType"] = subscription }
         guard let data = try? JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth]) else {
@@ -145,8 +113,8 @@ enum CredentialsProvider {
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: ownService,
-            kSecAttrAccount as String: ownAccount,
+            kSecAttrService as String: cacheService,
+            kSecAttrAccount as String: cacheAccount,
         ]
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         guard status == errSecItemNotFound else { return }
@@ -193,7 +161,6 @@ enum CredentialsProvider {
         }
         return ClaudeCredentials(
             accessToken: accessToken,
-            refreshToken: oauth["refreshToken"] as? String,
             expiresAt: oauth["expiresAt"] as? Double,
             subscriptionType: oauth["subscriptionType"] as? String
         )
