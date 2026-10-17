@@ -182,5 +182,5 @@ Sources/AgentTracker/
   CodexUsage.swift            Codex rollout log scanner (limits + tokens)
   Formatters.swift            "184.8K", "Resets in 6d 4h", etc.
 scripts/make-app.sh           Builds and installs the .app bundle
-scripts/make-icon.swift       Renders AppIcon.icns from the in-app asterisk mark
+Resources/AppIcon.icns        App icon (the gauge logo), copied in by make-app.sh
 ```
