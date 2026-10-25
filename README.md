@@ -1,8 +1,8 @@
 # Agent Tracker
 
-A macOS menu bar app that shows your Claude Code and Codex usage at a glance —
-the same information as the CLI's `/usage` screen, always one click away in the
-top menu bar.
+A macOS menu bar app that shows your Claude Code, Codex, and Grok usage at a
+glance — the same information as each CLI's `/usage` screen, always one click
+away in the top menu bar.
 
 ```
 ✳ Claude Code
@@ -26,14 +26,16 @@ TOKENS BY MODEL
 Sonnet 5  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓  184.8K
 ```
 
-The panel has two tabs — **Claude** and **Codex** — and the menu bar icon
-changes to match the selected one (✳ for Claude, `</>` for Codex), so you can
-tell at a glance which tool you're tracking. The selection is remembered
-across launches.
+The panel has three tabs — **Claude**, **Codex**, and **Grok** — and the menu
+bar icon changes to match the selected one (✳ for Claude, `</>` for Codex, and
+the Grok mark for Grok), so you can tell at a glance which tool you're tracking. The
+selection is remembered across launches. The sliders button in the footer
+chooses which of those platforms appear; at least one stays on, and that
+choice is remembered too.
 
 ## How it works
 
-Neither tab needs its own login — the app piggybacks on the CLIs.
+None of the tabs needs its own login — the app piggybacks on the CLIs.
 
 ### Claude tab
 
@@ -69,6 +71,23 @@ logs under `~/.codex/sessions/**/*.jsonl`.
 - **Tokens by day / by model**: the per-turn token counts from the same logs,
   for the last 7 days on this machine.
 
+### Grok tab
+
+Reads the same billing endpoint the Grok CLI's `/usage` screen uses
+(`cli-chat-proxy.grok.com`), with the OAuth token `grok login` stores in
+`~/.grok/auth.json`. Expired access tokens are refreshed in memory; nothing
+is written back, so the CLI stays the owner of the credential.
+
+The layout matches grok.com **Settings → Usage**:
+
+- **Weekly limit**: percent of the shared weekly pool used, a segmented bar
+  (one segment per product), and when the pool resets.
+- **Product split**: each product's share of that same pool — Chat, Imagine,
+  Build, Voice, API, Bot, Cursor, or whichever products the account actually
+  used. Each figure is that product's share of the weekly pool, and the
+  figures add up to the weekly total.
+- **Extra credits**: the prepaid balance, when the API reports one.
+
 Data refreshes automatically every 60 seconds, or on demand via the refresh
 button in the panel. If the usage API rate-limits a request, the app backs
 off until the limit resets (the refresh button greys out and its tooltip
@@ -77,12 +96,15 @@ shows when it'll unlock) instead of retrying every 60 seconds regardless.
 ## Usage
 
 1. Click the ✳ icon in the menu bar to open the panel.
-2. Switch between the **Claude** and **Codex** tabs with the buttons under the
-   title.
-3. **LIMITS** shows how much of each usage window you've used, and when it
-   resets.
-4. **TOKENS BY DAY** / **TOKENS BY MODEL** show local usage for the last 7
-   days, from this machine only.
+2. Switch between the **Claude**, **Codex**, and **Grok** tabs with the buttons
+   under the title. Use the sliders button in the footer to hide platforms you
+   don't want listed. Hiding the open one switches you to the next one that's
+   still on. With a single platform left, the tab buttons hide.
+3. **LIMITS** (Claude, Codex) shows how much of each usage window you've used,
+   and when it resets. **WEEKLY LIMIT** (Grok) shows the shared pool and the
+   product split.
+4. **TOKENS BY DAY** / **TOKENS BY MODEL** on the Claude and Codex tabs show
+   local usage for the last 7 days, from this machine only.
 5. Use the refresh (↻) button for an on-demand update, or the power button to
    quit.
 
@@ -96,6 +118,7 @@ or the icon again, to dismiss it.
 - The Claude CLI, logged in at least once (`claude` → `/login`)
 - For the Codex tab: the Codex CLI, run at least once (it just reads
   `~/.codex/sessions`)
+- For the Grok tab: the Grok CLI, logged in at least once (`grok login`)
 
 ## Build & install
 
@@ -164,9 +187,15 @@ System Settings → General → Login Items → add **Agent Tracker**.
 - **Codex limits look stale** — Codex only reports its limits while it's
   running, so the panel shows the newest snapshot from its logs along with
   when it was taken. Run Codex once to freshen it.
-- **"Rate limited by the usage API"** — the OAuth usage endpoint is being hit
-  too often (e.g. repeated manual refreshes). The app backs off automatically
-  and the panel/tooltip shows when it'll retry; no action needed.
+- **"No Grok CLI credentials found"** — run `grok login` in a terminal, then
+  hit refresh in the panel.
+- **"Usage not reported yet"** — Grok returned a weekly window but left the
+  percentage out. Open grok.com → Settings → Usage, or refresh again after
+  some usage lands.
+- **"Rate limited by the usage API"** — the Claude or Grok usage endpoint is
+  being hit too often (e.g. repeated manual refreshes). The app backs off
+  automatically and the panel/tooltip shows when it'll retry; no action
+  needed. Claude and Grok back off independently.
 
 ## Project layout
 
@@ -180,6 +209,7 @@ Sources/AgentTracker/
   UsageAPI.swift              Limits from the OAuth usage endpoint
   LocalUsage.swift            Claude JSONL log scanner (tokens by day/model)
   CodexUsage.swift            Codex rollout log scanner (limits + tokens)
+  GrokUsage.swift             Grok weekly pool and product split
   Formatters.swift            "184.8K", "Resets in 6d 4h", etc.
 scripts/make-app.sh           Builds and installs the .app bundle
 Resources/AppIcon.icns        App icon (the gauge logo), copied in by make-app.sh

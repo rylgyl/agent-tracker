@@ -44,4 +44,12 @@ enum Format {
     static func percent(_ value: Double) -> String {
         "\(Int(value.rounded()))%"
     }
+
+    /// 8 → "$8", 12.5 → "$12.50". Whole dollars drop the cents.
+    static func dollars(_ amount: Double) -> String {
+        if amount == amount.rounded() {
+            return "$\(Int(amount))"
+        }
+        return String(format: "$%.2f", amount)
+    }
 }
