@@ -85,7 +85,7 @@ enum UsageAPI {
     /// `Retry-After` is either delta-seconds ("120") or an HTTP-date
     /// ("Fri, 15 Aug 2026 21:00:00 GMT"); some proxies also send a
     /// unix-timestamp-style `x-ratelimit-reset` header.
-    private static func retryAfter(_ http: HTTPURLResponse) -> Date? {
+    static func retryAfter(_ http: HTTPURLResponse) -> Date? {
         if let raw = http.value(forHTTPHeaderField: "retry-after") {
             if let seconds = Double(raw) {
                 return Date().addingTimeInterval(seconds)

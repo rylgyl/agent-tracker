@@ -6,16 +6,18 @@ import SwiftUI
 enum MenuTab: String, CaseIterable, Identifiable {
     case claude = "Claude"
     case codex = "Codex"
+    case grok = "Grok"
 
     static let storageKey = "selectedTab"
 
     var id: String { rawValue }
 
-    /// Also used as the menu bar icon for the selected tab.
-    var icon: String {
+    /// SF Symbol for the menu bar and header. Grok is drawn with `GrokMark`.
+    var symbolName: String? {
         switch self {
         case .claude: return "asterisk"
         case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .grok: return nil
         }
     }
 
@@ -23,16 +25,75 @@ enum MenuTab: String, CaseIterable, Identifiable {
         switch self {
         case .claude: return "Claude Code"
         case .codex: return "Codex"
+        case .grok: return "Grok"
         }
+    }
+}
+
+/// Which platforms the panel lists. Stored as a comma-separated list of tab
+/// names. An empty or unrecognized value falls back to every platform, and a
+/// toggle that would hide the last one is ignored.
+struct VisiblePlatforms: RawRepresentable, Equatable {
+    var tabs: Set<MenuTab>
+
+    static let storageKey = "visiblePlatforms"
+    static let all = VisiblePlatforms(tabs: Set(MenuTab.allCases))
+
+    /// `MenuTab.allCases` order, so the tab bar and the saved string stay stable.
+    var ordered: [MenuTab] {
+        MenuTab.allCases.filter { tabs.contains($0) }
+    }
+
+    func contains(_ tab: MenuTab) -> Bool {
+        tabs.contains(tab)
+    }
+
+    /// The tab to show when `tab` has been hidden.
+    func selecting(_ tab: MenuTab) -> MenuTab {
+        if tabs.contains(tab) { return tab }
+        return ordered.first ?? .claude
+    }
+
+    func toggling(_ tab: MenuTab) -> VisiblePlatforms {
+        var next = tabs
+        if next.contains(tab) {
+            guard next.count > 1 else { return self }
+            next.remove(tab)
+        } else {
+            next.insert(tab)
+        }
+        return VisiblePlatforms(tabs: next)
+    }
+
+    var rawValue: String {
+        ordered.map(\.rawValue).joined(separator: ",")
+    }
+
+    init(tabs: Set<MenuTab>) {
+        self.tabs = tabs.isEmpty ? Set(MenuTab.allCases) : tabs
+    }
+
+    init?(rawValue: String) {
+        let parsed = Set(
+            rawValue.split(separator: ",").compactMap { MenuTab(rawValue: String($0)) }
+        )
+        guard !parsed.isEmpty else { return nil }
+        tabs = parsed
     }
 }
 
 /// The popover panel, styled after the Claude Code `/usage` screen:
 /// LIMITS (session + weekly bars), TOKENS BY DAY, TOKENS BY MODEL.
-/// Two tabs: Claude (usage API + local logs) and Codex (local logs only).
+/// Three tabs: Claude (usage API + local logs), Codex (local logs only),
+/// and Grok (weekly pool split by product).
 struct MenuView: View {
     @EnvironmentObject private var store: UsageStore
     @AppStorage(MenuTab.storageKey) private var tab: MenuTab = .claude
+    @AppStorage(VisiblePlatforms.storageKey) private var visible = VisiblePlatforms.all
+    @State private var choosingPlatforms = false
+
+    /// The open platform, redirected when the saved one is currently hidden.
+    private var shown: MenuTab { visible.selecting(tab) }
 
     private enum Style {
         static let background = Color(red: 0.13, green: 0.13, blue: 0.21)
@@ -40,6 +101,7 @@ struct MenuView: View {
         static let barFill = Color.white
         static let claudeAccent = Color(red: 0.85, green: 0.35, blue: 0.22) // Claude coral
         static let codexAccent = Color(red: 0.36, green: 0.76, blue: 0.66) // Codex teal
+        static let grokAccent = Color(red: 0.36, green: 0.55, blue: 0.98) // Usage-screen blue
         static let secondaryText = Color.white.opacity(0.55)
         static let width: CGFloat = 320
 
@@ -47,6 +109,21 @@ struct MenuView: View {
             switch tab {
             case .claude: return claudeAccent
             case .codex: return codexAccent
+            case .grok: return grokAccent
+            }
+        }
+
+        /// Segment colors for the weekly pool, stable per product name.
+        static func productColor(_ name: String) -> Color {
+            switch name {
+            case "Chat": return Color(red: 0.32, green: 0.52, blue: 0.98)
+            case "Imagine": return Color(red: 0.48, green: 0.66, blue: 1.0)
+            case "Build": return Color(red: 0.38, green: 0.78, blue: 0.96)
+            case "Voice": return Color(red: 0.62, green: 0.76, blue: 0.98)
+            case "API": return Color(red: 0.72, green: 0.80, blue: 0.98)
+            case "Bot": return Color(red: 0.42, green: 0.64, blue: 0.86)
+            case "Cursor": return Color(red: 0.78, green: 0.84, blue: 0.96)
+            default: return Color.white.opacity(0.75)
             }
         }
     }
@@ -61,14 +138,40 @@ struct MenuView: View {
         return digest.map { String(format: "%02x", $0) }.joined() == Self.noteAccountDigest
     }
 
+    private var planLabel: String? {
+        switch shown {
+        case .claude: return store.subscriptionType
+        case .codex: return store.codexUsage.planType
+        case .grok: return store.grokUsage.planType
+        }
+    }
+
+    private var refreshHelp: String {
+        if shown == .claude, store.isRateLimited {
+            let when = store.rateLimitedUntil?.formatted(date: .omitted, time: .shortened) ?? "shortly"
+            return "Claude limits rate limited until \(when)"
+        }
+        if shown == .grok, store.isGrokRateLimited {
+            let when = store.grokRateLimitedUntil?.formatted(date: .omitted, time: .shortened) ?? "shortly"
+            return "Grok usage rate limited until \(when)"
+        }
+        return "Refresh now"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
-            tabBar
+            if visible.ordered.count > 1 {
+                tabBar
+            }
+            if choosingPlatforms {
+                platformChooser
+            }
             Divider().overlay(Style.barTrack)
-            switch tab {
+            switch shown {
             case .claude: claudeTab
             case .codex: codexTab
+            case .grok: grokTab
             }
             footer
         }
@@ -78,19 +181,19 @@ struct MenuView: View {
         .colorScheme(.dark)
         .font(.system(size: 12, design: .monospaced))
         .foregroundStyle(.white)
+        .onAppear { tab = visible.selecting(tab) }
     }
 
     // MARK: - Chrome
 
     private var header: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: tab.icon)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(Style.accent(for: tab))
+            PlatformIcon(tab: shown)
+                .foregroundStyle(Style.accent(for: shown))
             VStack(alignment: .leading, spacing: 2) {
-                Text(tab.title)
+                Text(shown.title)
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
-                if let plan = tab == .claude ? store.subscriptionType : store.codexUsage.planType {
+                if let plan = planLabel {
                     Text(plan)
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(Style.secondaryText)
@@ -107,23 +210,23 @@ struct MenuView: View {
 
     private var tabBar: some View {
         HStack(spacing: 6) {
-            ForEach(MenuTab.allCases) { item in
+            ForEach(visible.ordered) { item in
                 Button {
                     tab = item
                 } label: {
                     Text(item.rawValue)
-                        .font(.system(size: 11, weight: tab == item ? .bold : .regular,
+                        .font(.system(size: 11, weight: shown == item ? .bold : .regular,
                                       design: .monospaced))
-                        .foregroundStyle(tab == item ? Color.white : Style.secondaryText)
+                        .foregroundStyle(shown == item ? Color.white : Style.secondaryText)
                         .padding(.vertical, 4)
                         .frame(maxWidth: .infinity)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(tab == item ? Style.accent(for: item).opacity(0.28) : Color.white.opacity(0.06))
+                                .fill(shown == item ? Style.accent(for: item).opacity(0.28) : Color.white.opacity(0.06))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 5)
-                                .stroke(tab == item ? Style.accent(for: item) : Color.clear, lineWidth: 1)
+                                .stroke(shown == item ? Style.accent(for: item) : Color.clear, lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)
@@ -140,6 +243,18 @@ struct MenuView: View {
             }
             Spacer()
             Button {
+                choosingPlatforms.toggle()
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .padding(3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(choosingPlatforms ? Color.white.opacity(0.16) : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Choose platforms")
+            Button {
                 store.refresh()
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -147,9 +262,7 @@ struct MenuView: View {
             }
             .buttonStyle(.plain)
             .disabled(store.isRefreshing)
-            .help(store.isRateLimited
-                  ? "Claude limits rate limited until \(store.rateLimitedUntil?.formatted(date: .omitted, time: .shortened) ?? "shortly")"
-                  : "Refresh now")
+            .help(refreshHelp)
             Button {
                 NSApp.terminate(nil)
             } label: {
@@ -157,6 +270,45 @@ struct MenuView: View {
             }
             .buttonStyle(.plain)
             .help("Quit")
+        }
+    }
+
+    private var platformChooser: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle("PLATFORMS")
+            HStack(spacing: 6) {
+                ForEach(MenuTab.allCases) { item in
+                    let enabled = visible.contains(item)
+                    Button {
+                        let next = visible.toggling(item)
+                        visible = next
+                        tab = next.selecting(tab)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: enabled ? "checkmark" : "circle")
+                                .font(.system(size: 9, weight: .bold))
+                            Text(item.rawValue)
+                                .font(.system(size: 11, weight: enabled ? .bold : .regular,
+                                              design: .monospaced))
+                        }
+                        .foregroundStyle(enabled ? Color.white : Style.secondaryText)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(enabled ? Style.accent(for: item).opacity(0.28) : Color.white.opacity(0.06))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(enabled ? Style.accent(for: item) : Color.clear, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help(enabled && visible.ordered.count == 1
+                          ? "At least one platform stays visible"
+                          : (enabled ? "Hide \(item.rawValue)" : "Show \(item.rawValue)"))
+                }
+            }
         }
     }
 
@@ -228,6 +380,76 @@ struct MenuView: View {
         }
     }
 
+    /// Weekly pool the way grok.com Settings → Usage draws it: one total,
+    /// a segmented bar, and each product's share of that total.
+    private var grokTab: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !store.grokUsage.isSignedIn {
+                Text(store.grokErrorMessage
+                     ?? "No Grok CLI credentials found. Run `grok login` in a terminal.")
+                    .foregroundStyle(Style.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("WEEKLY LIMIT")
+                    if let percent = store.grokUsage.weeklyPercent {
+                        HStack {
+                            Text("Weekly")
+                            Spacer()
+                            Text("\(Format.percent(percent)) of total")
+                        }
+                        splitBar(store.grokUsage.products, total: percent)
+                        Text(Format.resets(at: store.grokUsage.resetsAt))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Style.secondaryText)
+                    } else if store.grokUsage.resetsAt != nil {
+                        Text(store.isRefreshing ? "Loading…" : "Usage not reported yet")
+                            .foregroundStyle(Style.secondaryText)
+                        Text(Format.resets(at: store.grokUsage.resetsAt))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Style.secondaryText)
+                    } else {
+                        Text(store.isRefreshing ? "Loading…" : "No limit data")
+                            .foregroundStyle(Style.secondaryText)
+                    }
+
+                    if !store.grokUsage.products.isEmpty {
+                        ForEach(store.grokUsage.products) { product in
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(Style.productColor(product.name))
+                                    .frame(width: 6, height: 6)
+                                Text(product.name)
+                                Spacer()
+                                Text("\(Format.percent(product.usagePercent)) of total")
+                                    .foregroundStyle(Style.secondaryText)
+                            }
+                        }
+                    }
+                }
+
+                if let balance = store.grokUsage.extraCreditsUSD {
+                    Divider().overlay(Style.barTrack)
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionTitle("EXTRA CREDITS")
+                        HStack {
+                            Text("Balance")
+                            Spacer()
+                            Text(Format.dollars(balance))
+                        }
+                    }
+                }
+
+                if let error = store.grokErrorMessage {
+                    Text(error)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.yellow)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
     // MARK: - Sections
 
     private func limitRow(name: String, percent: Double, resetsAt: Date?) -> some View {
@@ -291,6 +513,34 @@ struct MenuView: View {
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
             .foregroundStyle(Style.secondaryText)
             .kerning(1)
+    }
+
+    /// One track for the weekly pool. Each product is a segment; the unused
+    /// remainder stays the track color, matching the usage screen.
+    private func splitBar(_ products: [GrokProductUsage], total: Double) -> some View {
+        GeometryReader { geometry in
+            let gap: CGFloat = products.count > 1 ? 2 : 0
+            let gaps = gap * CGFloat(max(products.count - 1, 0))
+            let usable = max(geometry.size.width - gaps, 0)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Style.barTrack)
+                HStack(spacing: gap) {
+                    ForEach(products) { product in
+                        let width = usable * CGFloat(min(max(product.usagePercent, 0), 100) / 100)
+                        Capsule()
+                            .fill(Style.productColor(product.name))
+                            .frame(width: max(width, product.usagePercent > 0 ? 3 : 0))
+                    }
+                    if products.isEmpty, total > 0 {
+                        Capsule()
+                            .fill(Style.barFill)
+                            .frame(width: max(usable * CGFloat(min(max(total, 0), 100) / 100), 3))
+                    }
+                }
+            }
+        }
+        .frame(height: 6)
+        .frame(maxWidth: .infinity)
     }
 
     private func bar(fraction: Double) -> some View {

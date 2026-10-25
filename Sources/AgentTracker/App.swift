@@ -6,13 +6,14 @@ struct AgentTrackerApp: App {
     @StateObject private var store = UsageStore()
     /// Mirrors the panel's tab selection so the menu bar icon follows it.
     @AppStorage(MenuTab.storageKey) private var selectedTab: MenuTab = .claude
+    @AppStorage(VisiblePlatforms.storageKey) private var visiblePlatforms = VisiblePlatforms.all
 
     var body: some Scene {
         MenuBarExtra {
             MenuView()
                 .environmentObject(store)
         } label: {
-            Image(systemName: selectedTab.icon)
+            PlatformIcon(tab: visiblePlatforms.selecting(selectedTab), menuBar: true)
         }
         .menuBarExtraStyle(.window)
     }
