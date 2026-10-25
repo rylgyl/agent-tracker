@@ -19,8 +19,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp ".build/release/AgentTracker" "$APP/Contents/MacOS/$APP_NAME"
 
-echo "Rendering app icon..."
-swift scripts/make-icon.swift "$APP/Contents/Resources/AppIcon.icns"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -53,7 +52,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Icon rendering leaves Finder metadata behind, which codesign rejects.
+# Copied files can carry Finder metadata, which codesign rejects.
 xattr -cr "$APP"
 
 # Ad-hoc signature so Keychain access sticks across launches.

@@ -41,9 +41,17 @@ None of the tabs needs its own login — the app piggybacks on the CLIs.
 
 - **Authentication**: reads the OAuth token that `claude` stores after login
   (macOS Keychain item `Claude Code-credentials`, with a fallback to
-  `~/.claude/.credentials.json`). Expired tokens are refreshed automatically
-  using the CLI's refresh token; nothing is written back, the CLI stays the
-  owner of the credential.
+  `~/.claude/.credentials.json`), and caches it in its own Keychain item
+  `com.agent-tracker.usage` so a poll doesn't touch the CLI's item while the
+  token is still valid. Read-only: nothing is ever written back to the CLI.
+
+  **The app never refreshes the token.** That endpoint rotates the refresh
+  token, so presenting the CLI's copy invalidates the one the CLI still has —
+  which logs you out of `claude` the next time you use it. The CLI is the sole
+  owner of the credential and the only thing that renews it. When the token is
+  expired the LIMITS section shows "Claude CLI token has expired" until you next
+  run `claude`, which renews it; the token charts below are unaffected, since
+  they come from local logs rather than the API.
 - **Limits** (Session / Weekly percentages and reset countdowns): fetched from
   the same OAuth usage endpoint the CLI's `/usage` screen uses.
 - **Tokens by day / by model**: computed locally by scanning the CLI's session
@@ -128,8 +136,17 @@ swift run
 ```
 
 On first launch, macOS will ask for permission to read the
-`Claude Code-credentials` Keychain item — click **Always Allow** so the prompt
-doesn't reappear on every refresh.
+`Claude Code-credentials` Keychain item — click **Always Allow**.
+
+That prompt can come back periodically. The CLI rewrites its Keychain item each
+time it renews its token, which regenerates the item's ACL and drops the grant.
+There's no way around it short of the app keeping an independent credential, and
+doing that means refreshing tokens — which logs you out of `claude` (see
+[How it works](#how-it-works)). An occasional prompt is the better trade.
+
+Rebuilding also costs one prompt: the app is only ad-hoc signed, so its code
+identity changes with every `./scripts/make-app.sh` and any existing grant no
+longer matches.
 
 ### Sharing with someone else
 
@@ -157,8 +174,11 @@ System Settings → General → Login Items → add **Agent Tracker**.
 
 - **"No Claude CLI credentials found"** — run `claude` in a terminal and log
   in, then hit refresh in the panel.
-- **"Not authorized"** — your token was revoked or the refresh failed; run
-  `claude` again to re-authenticate.
+- **"Not authorized"** — your token was revoked; run `claude` again to
+  re-authenticate.
+- **"Claude CLI token has expired"** — expected if you haven't used `claude` in
+  a while. The app won't renew the token itself (doing so would log you out of
+  the CLI), so run `claude` once and the panel recovers on its next refresh.
 - **Token charts are empty** — token history comes from local CLI logs, so it
   only covers usage from `claude` on this machine (not claude.ai or other
   devices).
@@ -192,5 +212,5 @@ Sources/AgentTracker/
   GrokUsage.swift             Grok weekly pool and product split
   Formatters.swift            "184.8K", "Resets in 6d 4h", etc.
 scripts/make-app.sh           Builds and installs the .app bundle
-scripts/make-icon.swift       Renders AppIcon.icns from the in-app asterisk mark
+Resources/AppIcon.icns        App icon (the gauge logo), copied in by make-app.sh
 ```

@@ -66,9 +66,11 @@ final class UsageStore: ObservableObject {
             codexUsage = local.codex
             apply(await grok)
 
+            // Claude's usage API is the only rate-limited part of its refresh.
+            // Credential loading never refreshes the token; the CLI owns that.
             if !claudeLimited {
                 do {
-                    let credentials = try await CredentialsProvider.loadValid()
+                    let credentials = try CredentialsProvider.loadValid()
                     subscriptionType = credentials.subscriptionType?.uppercased()
                     limits = try await UsageAPI.fetchLimits(accessToken: credentials.accessToken)
                     errorMessage = nil
